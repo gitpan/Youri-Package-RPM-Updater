@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# $Id: /mirror/youri/soft/Package-RPM-Updater/trunk/t/perlcritic.t 2315 2007-03-22T13:45:11.684364Z guillomovitch  $
+# $Id: /local/youri/soft/Package-RPM-Updater/trunk/t/perlcritic.t 2315 2007-03-22T13:45:11.684364Z guillomovitch  $
 
 use strict;
 use warnings;

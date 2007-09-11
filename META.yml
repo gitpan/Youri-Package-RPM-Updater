@@ -1,13 +1,16 @@
 # http://module-build.sourceforge.net/META-spec.html
 #XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
 name:         Youri-Package-RPM-Updater
-version:      v0.1.0
+version:      0.3.3
 version_from: lib/Youri/Package/RPM/Updater.pm
 installdirs:  site
 requires:
     DateTime:                      0
-    File::Fetch:                   0
+    LWP::UserAgent:                0
     RPM4:                          0
+    String::ShellQuote:            0
+    SVN::Client:                   0
+    Test::Exception:               0
     version:                       0
 
 distribution_type: module

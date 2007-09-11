@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# $Id$
+# $Id: /local/youri/soft/Package-RPM-Updater/trunk/t/kwalitee.t 2314 2007-03-22T13:41:57.774951Z guillomovitch  $
 
 use Test::More;
 eval {
