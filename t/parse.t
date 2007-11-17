@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# $Id: /mirror/youri/soft/Repository/trunk/t/test.t 2314 2007-03-22T13:41:57.774951Z guillomovitch  $
+# $Id: parse.t 1891 2007-11-04 17:40:52Z guillomovitch $
 
 use strict;
 use Test::More;

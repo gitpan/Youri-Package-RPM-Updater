@@ -1,11 +1,11 @@
-ChangeLog
+Changes
 lib/Youri/Package/RPM/Updater.pm
 Makefile.PL
 MANIFEST			This list of files
 README
 t/kwalitee.t
 t/parse.t
-t/perl-File-HomeDir-0.58-1mdv2007.0.src.rpm
+t/perl-File-HomeDir.spec
 t/perlcritic.t
 t/pod-coverage.t
 t/pod.t

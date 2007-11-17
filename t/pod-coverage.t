@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# $Id: /local/youri/soft/Package-RPM-Updater/trunk/t/pod-coverage.t 2315 2007-03-22T13:45:11.684364Z guillomovitch  $
+# $Id: pod-coverage.t 1891 2007-11-04 17:40:52Z guillomovitch $
 
 use strict;
 use warnings;
