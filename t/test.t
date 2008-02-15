@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# $Id: test.t 1900 2007-11-04 19:12:54Z guillomovitch $
+# $Id: test.t 1932 2008-02-15 10:48:29Z guillomovitch $
 
 use strict;
 use DateTime;
