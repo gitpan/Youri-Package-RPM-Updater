@@ -1,4 +1,4 @@
-# $Id: Updater.pm 1940 2008-02-15 21:50:47Z guillomovitch $
+# $Id: Updater.pm 1952 2008-04-22 12:29:52Z guillomovitch $
 
 package Youri::Package::RPM::Updater;
 
@@ -86,6 +86,24 @@ or indirect definition:
 
 are supported. Any more complex one is not.
 
+=head1 AUTHORS
+
+Julien Danjou <danjou@mandriva.com>
+
+Michael Scherer <misc@mandriva.org>
+
+Guillaume Rousse <guillomovitch@mandriva.org>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2003-2007 Mandriva.
+
+Permission to use, copy, modify, and distribute this software and its
+documentation under the terms of the GNU General Public License is hereby 
+granted. No representations are made about the suitability of this software 
+for any purpose. It is provided "as is" without express or implied warranty.
+See the GNU General Public License for more details.
+
 =cut
 
 use strict;
@@ -101,7 +119,7 @@ use LWP::UserAgent;
 use SVN::Client;
 use RPM4;
 use Readonly;
-use version; our $VERSION = qv('0.4.1');
+use version; our $VERSION = qv('0.4.2');
 
 # default values
 Readonly::Scalar my $default_url_rewrite_rules => [
@@ -735,22 +753,4 @@ sub _get_new_release {
     return ($directive, $value);
 }
 
-__END__
-
-=head1 AUTHORS
-
-Julien Danjou <danjou@mandriva.com>
-
-Michael Scherer <misc@mandriva.org>
-
-Guillaume Rousse <guillomovitch@mandriva.org>
-
-=head1 COPYRIGHT AND LICENSE
-
-Copyright (c) 2003-2007 Mandriva.
-
-Permission to use, copy, modify, and distribute this software and its
-documentation under the terms of the GNU General Public License is hereby 
-granted. No representations are made about the suitability of this software 
-for any purpose. It is provided "as is" without express or implied warranty.
-See the GNU General Public License for more details.
+1;
