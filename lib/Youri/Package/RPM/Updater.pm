@@ -1,4 +1,4 @@
-# $Id: Updater.pm 1952 2008-04-22 12:29:52Z guillomovitch $
+# $Id: Updater.pm 2125 2009-05-07 20:18:12Z guillomovitch $
 
 package Youri::Package::RPM::Updater;
 
@@ -119,7 +119,7 @@ use LWP::UserAgent;
 use SVN::Client;
 use RPM4;
 use Readonly;
-use version; our $VERSION = qv('0.4.2');
+use version; our $VERSION = qv('0.4.4');
 
 # default values
 Readonly::Scalar my $default_url_rewrite_rules => [
@@ -183,6 +183,10 @@ list of directories containing source packages (default: empty).
 
 timeout for file downloads (default: 10)
 
+=item agent $agent
+
+user agent for file downloads (default: youri-package-updater/$VERSION)
+
 =item alternate_extensions $extensions
 
 alternate extensions to try when downloading source fails (default: tar.gz,
@@ -237,6 +241,8 @@ sub new {
             $options{release_suffix}       : undef,
         _timeout            => defined $options{timeout}                ?
             $options{timeout}              : 10,
+        _agent              => defined $options{agent}                  ?
+            $options{agent}                : "youri-package-updater/$VERSION",
         _srpm_dirs          => defined $options{srpm_dirs}              ?
             $options{srpm_dirs}            : undef,
         _alternate_extensions => defined $options{alternate_extensions} ?
@@ -549,6 +555,7 @@ sub _fetch_tarball {
     my $agent = LWP::UserAgent->new();
     $agent->env_proxy();
     $agent->timeout($self->{_timeout});
+    $agent->agent($self->{_agent});
 
     my $file = $self->_fetch_potential_tarball($agent, $url);
 
@@ -582,16 +589,17 @@ sub _fetch_potential_tarball {
     my $response = $agent->mirror($url, $dest);
     if ($response->is_success) {
         print "response: OK\n" if $self->{_verbose} > 1;
-        # check content type
-        my $type = $response->header('Content-Type');
-        print "content-type: $type\n" if $self->{_verbose} > 1;
-        if ($type =~ m!^application/(?:x-(?:tar|gz|gzip|bz2|bzip2)|octet-stream)$!) {
-            return $dest;
-        } else {
-            # wrong type
-            unlink $dest;
-            return;
+        # check content type for archives
+        if ($filename =~ /\.(?:tar|gz|gzip|bz2|bzip2|lzma)$/) {
+            my $type = $response->header('Content-Type');
+            print "content-type: $type\n" if $self->{_verbose} > 1;
+            if ($type !~ m!^application/(?:x-(?:tar|gz|gzip|bz2|bzip2|lzma|download)|octet-stream)$!) {
+                # wrong type
+                unlink $dest;
+                return;
+            }
         }
+        return $dest;
     }
 }
 
