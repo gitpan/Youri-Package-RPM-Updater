@@ -1,4 +1,4 @@
-# $Id: Updater.pm 2125 2009-05-07 20:18:12Z guillomovitch $
+# $Id: Updater.pm 2142 2009-07-03 21:29:40Z guillomovitch $
 
 package Youri::Package::RPM::Updater;
 
@@ -119,7 +119,7 @@ use LWP::UserAgent;
 use SVN::Client;
 use RPM4;
 use Readonly;
-use version; our $VERSION = qv('0.4.4');
+use version; our $VERSION = qv('0.4.7');
 
 # default values
 Readonly::Scalar my $default_url_rewrite_rules => [
@@ -149,6 +149,9 @@ Readonly::Scalar my $default_url_rewrite_rules => [
     }
 ];
 
+Readonly::Scalar my $default_valid_content_types =>
+    '^application\/(?:x-(?:tar|gz|gzip|bz2|bzip2|lzma|download)|octet-stream|empty)$';
+
 =head1 CLASS METHODS
 
 =head2 new(%options)
@@ -162,6 +165,10 @@ Available options:
 =item verbose $level
 
 verbosity level (default: 0).
+
+=item check_new_version <true/false>
+
+check new version is really new before updating spec file (default: true).
 
 =item topdir $topdir
 
@@ -202,6 +209,11 @@ mesh, switch)
 list of rewrite rules to apply on source tag value for computing source URL
 when this last one doesn't have any, as hasrefs of two regexeps
 
+=item valid_content_types $types
+
+regexp of accepted content types when downloading archive files (anything
+matching \.(tar|gz|gzip|bz2|bzip2|lzma)$ regexp)
+
 =item new_version_message
 
 changelog message for new version (default: New version %%VERSION)
@@ -237,6 +249,8 @@ sub new {
         _sourcedir          => $sourcedir,
         _verbose            => defined $options{verbose}                ? 
             $options{verbose}              : 0,
+        _check_new_version  => defined $options{check_new_version}      ?
+            $options{check_new_version}    : 1,
         _release_suffix     => defined $options{release_suffix}         ?
             $options{release_suffix}       : undef,
         _timeout            => defined $options{timeout}                ?
@@ -255,6 +269,8 @@ sub new {
             $options{new_release_message}  : 'Rebuild',
         _url_rewrite_rules    => defined $options{url_rewrite_rules}    ?
             $options{url_rewrite_rules}    : $default_url_rewrite_rules,
+        _valid_content_types  => defined $options{valid_content_types}  ?
+            $options{valid_content_types}  : $default_valid_content_types,
     }, $class;
 
     return $self;
@@ -381,9 +397,11 @@ sub _update_spec {
 
     # return if old version >= new version
     my $old_version = $header->tag('version');
-    return if $new_version && RPM4::rpmvercmp($old_version, $new_version) >= 0;
+    return if $options{check_new_version} &&
+              $new_version                &&
+              RPM4::rpmvercmp($old_version, $new_version) >= 0;
 
-    my $new_release = $options{release};
+    my $new_release = $options{release} || '';
     my $epoch       = $header->tag('epoch');
 
     if ($options{spec_line_expression}) {
@@ -401,9 +419,10 @@ sub _update_spec {
             $new_version              && # version change needed
             !$version_updated            # not already done
         ) {
-            my ($directive, $value) = _get_new_version($line, $new_version);
+            my ($directive, $spacing, $value) =
+                _get_new_version($line, $new_version);
             if ($directive && $value) {
-                $line = $directive . $value . "\n";
+                $line = $directive . $spacing . $value . "\n";
                 $new_version = $value;
                 $version_updated = 1;
             }
@@ -412,9 +431,10 @@ sub _update_spec {
         if ($options{update_revision} && # update required
             !$release_updated            # not already done
         ) {
-            my ($directive, $value) = _get_new_release($line, $new_version, $new_release, $self->{_release_suffix});
+            my ($directive, $spacing, $value) =
+                _get_new_release($line, $new_version, $new_release, $self->{_release_suffix});
             if ($directive && $value) {
-                $line = $directive . $value . "\n";
+                $line = $directive . $spacing . $value . "\n";
                 $new_release = $value;
                 $release_updated = 1;
             }
@@ -593,7 +613,7 @@ sub _fetch_potential_tarball {
         if ($filename =~ /\.(?:tar|gz|gzip|bz2|bzip2|lzma)$/) {
             my $type = $response->header('Content-Type');
             print "content-type: $type\n" if $self->{_verbose} > 1;
-            if ($type !~ m!^application/(?:x-(?:tar|gz|gzip|bz2|bzip2|lzma|download)|octet-stream)$!) {
+            if ($type !~ /$self->{_valid_content_types}/) {
                 # wrong type
                 unlink $dest;
                 return;
@@ -694,71 +714,90 @@ sub _get_new_version {
 
     return unless $line =~ /^
         (
-            \%define\s+version\s+ # defined as macro
+            %define \s+              # macro
+                (?:
+                    version
+                |
+                    upstream_version
+                )
         |
-            (?i)Version:\s+       # defined as tag
+            (?i)Version:             # tag
         )
-        (\S+(?:\s+\S+)*)          # definition
-        \s*                       # trailing spaces
-    $/ox;
+        (\s+)                        # spacing
+        (\S+(?: \s+ \S+)*)           # value
+    /ox;
 
-    my ($directive, $value) = ($1, $2);
+    my ($directive, $spacing, $value) = ($1, $2, $3);
 
     if ($new_version) {
         $value = $new_version;
     }
 
-    return ($directive, $value);
+    return ($directive, $spacing, $value);
 }
 sub _get_new_release {
     my ($line, $new_version, $new_release, $release_suffix) = @_;
 
     return unless $line =~ /^
     (
-        \%define\s+rel(?:ease)?\s+ # defined as macro
+        %define \s+      # macro
+            (?:
+                rel
+            |
+                release
+            )
     |
-        (?i)Release:\s+            # defined as tag
+        (?i)Release:     # tag
     )
-    (\S+(?:\s+\S+)*)               # definition
-    \s*                            # trailing spaces
-    $/ox;
+    (\s+)                # spacing
+    (\S+(?: \s+ \S+)*)   # value
+    /ox;
 
-    my ($directive, $value) = ($1, $2);
+    my ($directive, $spacing, $value) = ($1, $2, $3);
 
     if ($new_release) {
         $value = $new_release;
     } else {
-        # if not explicit release given, try to compute it
-        my ($macro_name, $macro_value) = $value =~ /^(%\w+\s+)?(.*)$/;
-
-        croak "Unable to extract release value from value '$value'"
-            unless $macro_value;
-
-        my ($prefix, $number, $suffix); 
-        if ($new_version) {
-            $number = 1;
+        if ($value =~ /^% (\w+) (\s+) (\S+) $/x) {
+            my ($macro_name, $macro_spacing, $macro_value) = ($1, $2, $3);
+            $macro_value = _get_new_release_number($macro_value, $new_version, $release_suffix);
+            $value = '%' . $macro_name . $macro_spacing . $macro_value;
+        } elsif ($value =~ /^% { (\w+) (\s+) (\S+) } $/x) {
+            my ($macro_name, $macro_spacing, $macro_value) = ($1, $2, $3);
+            $macro_value = _get_new_release_number($macro_value, $new_version, $release_suffix);
+            $value = '%{' . $macro_name . $macro_spacing . $macro_value . '}';
         } else {
-            # optional suffix from configuration
-            $release_suffix = $release_suffix ?
-                quotemeta($release_suffix) : '';
-            ($prefix, $number, $suffix) =
-                $macro_value =~ /^(.*?)(\d+)($release_suffix)?$/;
-
-            croak "Unable to extract release number from value '$macro_value'"
-                unless $number;
-
-            $number++;
+            $value = _get_new_release_number($value, $new_version, $release_suffix);
         }
-
-        $value = 
-            ($macro_name ? $macro_name : "") .
-            ($prefix ? $prefix : "") .
-            $number .
-            ($suffix ? $suffix : "");
-
     }
 
-    return ($directive, $value);
+    return ($directive, $spacing, $value);
+}
+
+sub _get_new_release_number {
+    my ($value, $new_version, $release_suffix) = @_;
+
+    my ($prefix, $number, $suffix); 
+    if ($new_version) {
+        $number = 1;
+    } else {
+        # optional suffix from configuration
+        $release_suffix = $release_suffix ?
+            quotemeta($release_suffix) : '';
+        ($prefix, $number, $suffix) =
+            $value =~ /^(.*?)(\d+)($release_suffix)?$/;
+
+        croak "Unable to extract release number from value '$value'"
+            unless $number;
+
+        $number++;
+    }
+
+    return 
+        ($prefix ? $prefix : "") .
+        $number .
+        ($suffix ? $suffix : "");
+
 }
 
 1;

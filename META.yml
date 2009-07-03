@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:                Youri-Package-RPM-Updater
-version:             0.4.4
+version:             0.4.7
 abstract:            ~
 license:             ~
 author:              
@@ -10,6 +10,7 @@ distribution_type:   module
 requires:     
     DateTime:                      0
     LWP::UserAgent:                0
+    Readonly:                      0
     RPM4:                          0
     SVN::Client:                   0
     Test::Exception:               0
