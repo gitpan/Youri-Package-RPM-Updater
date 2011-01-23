@@ -1,4 +1,4 @@
-# $Id: Updater.pm 2142 2009-07-03 21:29:40Z guillomovitch $
+# $Id: Updater.pm 2301 2011-01-22 12:10:08Z guillomovitch $
 
 package Youri::Package::RPM::Updater;
 
@@ -86,6 +86,20 @@ or indirect definition:
 
 are supported. Any more complex one is not.
 
+=head1 CONFIGURATION
+
+The following YAML-format configuration files are used:
+
+=over
+
+=item the system configuration file is F</etc/youri/updater.conf>
+
+=item the user configuration file is F<$HOME/.youri/updater.conf>
+
+=back
+
+Allowed directives are the same as new method options.
+
 =head1 AUTHORS
 
 Julien Danjou <danjou@mandriva.com>
@@ -115,42 +129,91 @@ use File::Copy;
 use File::Spec;
 use File::Path;
 use File::Temp qw/tempdir/;
+use List::MoreUtils qw/none/;
 use LWP::UserAgent;
 use SVN::Client;
-use RPM4;
 use Readonly;
-use version; our $VERSION = qv('0.4.7');
+use YAML::AppConfig;
+use Youri::Package::RPM 0.002;
+use version; our $VERSION = qv('0.6.0');
+use feature qw/switch/;
 
 # default values
-Readonly::Scalar my $default_url_rewrite_rules => [
-    {
-        from => 'http://(.*)\.(?:sourceforge|sf)\.net/?(.*)',
-        to   => 'http://prdownloads.sourceforge.net/$1/$2'
-    },
-    { # to test
-        from => 'https?://gna.org/projects/([^/]*)/(.*)',
-        to   => 'http://download.gna.org/$1/$2'
-    },
-    {
-        from => 'http://(.*)\.berlios.de/(.*)',
-        to   => 'http://download.berlios.de/$1/$2'
-    },
-    { # to test , and to merge with regular savanah ?
-        from => 'https?://savannah.nongnu.org/projects/([^/]*)/(.*)',
-        to   => 'http://savannah.nongnu.org/download/$1/$2'
-    },
-    { # to test
-        from => 'https?://savannah.gnu.org/projects/([^/]*)/(.*)',
-        to   => 'http://savannah.gnu.org/download/$1/$2'
-    },
-    {
-        from => 'http://search.cpan.org/dist/([^-]+)-.*',
-        to   => 'http://www.cpan.org/modules/by-module/$1/'
-    }
-];
+Readonly::Scalar my $defaults => <<'EOF';
+---
+srpm_dirs:
 
-Readonly::Scalar my $default_valid_content_types =>
-    '^application\/(?:x-(?:tar|gz|gzip|bz2|bzip2|lzma|download)|octet-stream|empty)$';
+timeout: 10
+
+agent: youri-package-updater/VERSION
+
+url_rewrite_rules:
+    - 
+        from: http://(.*)\.(?:sourceforge|sf)\.net/?(.*)
+        to:   http://prdownloads.sourceforge.net/$1/$2
+    -
+        from: https?://gna.org/projects/([^/]*)/(.*)'
+        to:   http://download.gna.org/$1/$2
+    -
+        from: http://(.*)\.berlios.de/(.*)
+        to:   http://download.berlios.de/$1/$2
+    -
+        from: https?://savannah.nongnu.org/projects/([^/]*)/(.*)
+        to:   http://savannah.nongnu.org/download/$1/$2
+    -
+        from: https?://savannah.gnu.org/projects/([^/]*)/(.*)
+        to:   http://savannah.gnu.org/download/$1/$2
+    -
+        from: http://search.cpan.org/dist/([^-]+)-.*
+        to:   http://www.cpan.org/modules/by-module/$1/
+
+archive_content_types:
+    tar: 
+        - application/x-tar
+    gz:
+        - application/x-tar
+        - application/x-gz
+        - application/x-gzip
+    tgz:
+        - application/x-tar
+        - application/x-gz
+        - application/x-gzip
+    bz2:
+        - application/x-tar
+        - application/x-bz2
+        - application/x-bzip
+        - application/x-bzip2
+    tbz2:
+        - application/x-tar
+        - application/x-bz2
+        - application/x-bzip
+        - application/x-bzip2
+    zip:
+        - application/x-gzip
+    lzma:
+        - application/x-tar
+        - application/x-lzma
+    _all:
+        - application/x-download
+        - application/octet-stream
+        - application/empty
+
+alternate_extensions:
+    - tar.gz
+    - tgz
+    - zip
+
+sourceforge_mirrors:
+    - ovh
+    - mesh
+    - switch
+
+new_version_message: New version %%VERSION
+
+new_release_message: Rebuild
+EOF
+
+my $wrapper_class = Youri::Package::RPM->get_wrapper_class();
 
 =head1 CLASS METHODS
 
@@ -207,12 +270,12 @@ mesh, switch)
 =item url_rewrite_rules $rules
 
 list of rewrite rules to apply on source tag value for computing source URL
-when this last one doesn't have any, as hasrefs of two regexeps
+when the source is a local file, as hashes of two regexeps
 
-=item valid_content_types $types
+=item archive_content_types $types
 
-regexp of accepted content types when downloading archive files (anything
-matching \.(tar|gz|gzip|bz2|bzip2|lzma)$ regexp)
+hash of lists of accepted content types when downloading archive files, indexed
+by archive extension
 
 =item new_version_message
 
@@ -233,45 +296,50 @@ sub new {
     my ($topdir, $sourcedir);
     if ($options{topdir}) {
         $topdir = File::Spec->rel2abs($options{topdir});
-        RPM4::add_macro("_topdir $topdir");
+        $wrapper_class->add_macro("_topdir $topdir");
     } else {
-        $topdir = RPM4::expand('%_topdir');
+        $topdir = $wrapper_class->expand_macro('%_topdir');
     }
     if ($options{sourcedir}) {
         $sourcedir = File::Spec->rel2abs($options{sourcedir});
-        RPM4::add_macro("_sourcedir $sourcedir");
+        $wrapper_class->add_macro("_sourcedir $sourcedir");
     } else {
-        $sourcedir = RPM4::expand('%_sourcedir');
+        $sourcedir = $wrapper_class->expand_macro('%_sourcedir');
     }
 
+    my $config = YAML::AppConfig->new(string => $defaults);
+    $config->merge(file => '/etc/youri/updater.conf')
+        if -r '/etc/youri/updater.conf';
+    $config->merge(file => "$ENV{HOME}/.youri/updater.conf")
+        if -r "$ENV{HOME}/.youri/updater.conf";
+     
     my $self = bless {
-        _topdir             => $topdir,
-        _sourcedir          => $sourcedir,
-        _verbose            => defined $options{verbose}                ? 
-            $options{verbose}              : 0,
-        _check_new_version  => defined $options{check_new_version}      ?
-            $options{check_new_version}    : 1,
-        _release_suffix     => defined $options{release_suffix}         ?
-            $options{release_suffix}       : undef,
-        _timeout            => defined $options{timeout}                ?
-            $options{timeout}              : 10,
-        _agent              => defined $options{agent}                  ?
-            $options{agent}                : "youri-package-updater/$VERSION",
-        _srpm_dirs          => defined $options{srpm_dirs}              ?
-            $options{srpm_dirs}            : undef,
-        _alternate_extensions => defined $options{alternate_extensions} ?
-            $options{alternate_extensions} : [ qw/tar.gz tgz zip/ ],
-        _sourceforge_mirrors => defined $options{sourceforge_mirrors}   ?
-            $options{sourceforge_mirrors}  : [ qw/ovh mesh switch/ ],
-        _new_version_message  => defined $options{new_version_message}  ?
-            $options{new_version_message}  : 'New version %%VERSION',
-        _new_release_message  => defined $options{new_release_message}  ?
-            $options{new_release_message}  : 'Rebuild',
-        _url_rewrite_rules    => defined $options{url_rewrite_rules}    ?
-            $options{url_rewrite_rules}    : $default_url_rewrite_rules,
-        _valid_content_types  => defined $options{valid_content_types}  ?
-            $options{valid_content_types}  : $default_valid_content_types,
+        _topdir               => $topdir,
+        _sourcedir            => $sourcedir,
+        _verbose              => $options{verbose}           // 0,
+        _check_new_version    => $options{check_new_version} // 1,
+        _release_suffix       => $options{release_suffix}    //  undef,
+        _timeout              => $options{timeout} //
+                                 $config->get('timeout'),
+        _agent                => $options{agent} //
+                                 $config->get('agent'),
+        _srpm_dirs            => $options{srpm_dirs} //
+                                 $config->get('srpm_dirs'),
+        _alternate_extensions => $options{alternate_extensions} //
+                                 $config->get('alternate_extensions'),
+        _sourceforge_mirrors  => $options{sourceforge_mirrors} //
+                                 $config->get('sourceforge_mirrors'),
+        _new_version_message  => $options{new_version_message} //
+                                 $config->get('new_version_message'),
+        _new_release_message  => $options{new_release_message} //
+                                 $config->get('new_release_message'),
+        _url_rewrite_rules    => $options{url_rewrite_rules} //
+                                 $config->get('url_rewrite_rules'),
+        _archive_content_types => $options{archive_content_types} //
+                                  $config->get('archive_content_types'),
     }, $class;
+
+    $self->{_agent} =~ s/VERSION/$VERSION/;
 
     return $self;
 }
@@ -348,8 +416,8 @@ sub update_from_source {
     my ($self, $src_file, $new_version, %options) = @_;
     croak "Not a class method" unless ref $self;
 
-    RPM4::setverbosity(0);
-    my ($spec_file) = RPM4::installsrpm($src_file);
+    $wrapper_class->set_verbosity(0);
+    my ($spec_file) = $wrapper_class->install_srpm($src_file);
 
     croak "Unable to install source package $src_file, aborting"
         unless $spec_file;
@@ -373,7 +441,7 @@ sub update_from_spec {
     $options{update_revision}  = 1 unless defined $options{update_revision};
     $options{update_changelog} = 1 unless defined $options{update_changelog};
 
-    my $spec = RPM4::Spec->new($spec_file, force => 1)
+    my $spec = $wrapper_class->new_spec($spec_file, force => 1)
         or croak "Unable to parse spec $spec_file\n"; 
 
     $self->_update_spec($spec_file, $spec, $new_version, %options) if
@@ -382,7 +450,7 @@ sub update_from_spec {
         $options{spec_line_callback}   ||
         $options{spec_line_expression};
 
-    $spec = RPM4::Spec->new($spec_file, force => 1)
+    $spec = $wrapper_class->new_spec($spec_file, force => 1)
         or croak "Unable to parse updated spec file $spec_file\n"; 
 
     $self->_download_sources($spec, $new_version, %options) if
@@ -464,7 +532,7 @@ sub _update_spec {
                 $entry =~ s/\%\%VERSION/$new_version/g;
             }
 
-            my $title = RPM4::expand(
+            my $title = $wrapper_class->expand_macro(
                 DateTime->now()->strftime('%a %b %d %Y') .
                 ' ' .
                 $self->_get_packager() .
@@ -499,42 +567,26 @@ sub _update_spec {
 sub _download_sources {
     my ($self, $spec, $new_version, %options) = @_;
 
-    foreach my $new_source ($self->_get_sources($spec)) {
+    foreach my $source ($self->_get_sources($spec, $new_version)) {
+        my $found;
 
-        # work on a copy, so as to not mess with original list
-        my $source = $new_source;
-        my ($found, $need_bzme);
-
-        # Sourceforge: attempt different mirrors
-        if ($source =~ m!http://prdownloads.sourceforge.net!) {
+        if ($source->{url} =~ m!http://prdownloads.sourceforge.net!) {
+            # if content is hosted on source forge, attempt to download
+            # from all configured mirrors
             foreach my $mirror (@{$self->{_sourceforge_mirrors}}) {
-                my $sf_source = $source;
-                $sf_source =~ s!prdownloads.sourceforge.net!$mirror.dl.sourceforge.net/sourceforge!;
-                $found = $self->_fetch_tarball($sf_source);
+                my $sf_url = $source->{url};
+                $sf_url =~ s!prdownloads.sourceforge.net!$mirror.dl.sourceforge.net/sourceforge!;
+                $found = $self->_fetch_tarball($sf_url);
                 last if $found;
             }
         } else {
-            if ($source =~ m!ftp.gnome.org/pub/GNOME/sources/!) {
-                # GNOME: add the major version to the URL automatically
-                # ftp://ftp.gnome.org/pub/GNOME/sources/ORbit2/ORbit2-2.10.0.tar.bz2
-                # is rewritten in
-                # ftp://ftp.gnome.org/pub/GNOME/sources/ORbit2/2.10/ORbit2-2.10.0.tar.bz2
-                (my $major = $new_version) =~ s/([^.]+\.[^.]+).*/$1/;
-                $source =~ s!(.*/)(.*)!$1$major/$2!;
-            } elsif ($source =~ m!\w+\.(perl|cpan)\.org/!) {
-                # CPAN: force http and tar.gz
-                $need_bzme = $source =~ s!\.tar\.bz2$!.tar.gz!;
-                $source =~ s!ftp://ftp\.(perl|cpan)\.org/pub/CPAN!http://www.cpan.org!;
-            }
-
-            # single attempt
-            $found = $self->_fetch($source);
+            $found = $self->_fetch($source->{url});
         }
 
-        croak "Unable to download source: $source" unless $found;
+        croak "Unable to download source: $source->{url}" unless $found;
 
-        # recompress if needed
-        $found = _bzme($found) if $need_bzme;
+        # recompress source if neeeded
+        _bzme($found) if $source->{bzme};
     }
 
 }
@@ -607,26 +659,37 @@ sub _fetch_potential_tarball {
 
     print "attempting to download $url\n" if $self->{_verbose};
     my $response = $agent->mirror($url, $dest);
-    if ($response->is_success) {
+    if ($response->is_success()) {
         print "response: OK\n" if $self->{_verbose} > 1;
-        # check content type for archives
-        if ($filename =~ /\.(?:tar|gz|gzip|bz2|bzip2|lzma)$/) {
+        my ($extension) = $filename =~ /\.(\w+)$/;
+        if ($self->{_archive_content_types}->{$extension}) {
+            # check content type for archives
             my $type = $response->header('Content-Type');
-            print "content-type: $type\n" if $self->{_verbose} > 1;
-            if ($type !~ /$self->{_valid_content_types}/) {
+            print "checking content-type $type: " if $self->{_verbose} > 1;
+            if (
+                none { $type eq $_ }
+                @{$self->{_archive_content_types}->{$extension}},
+                @{$self->{_archive_content_types}->{_all}}
+            ) {
                 # wrong type
+                print "NOK\n" if $self->{_verbose} > 1;
                 unlink $dest;
                 return;
+            } else {
+                print "OK\n" if $self->{_verbose} > 1;
             }
         }
         return $dest;
+    } else {
+        print "response: NOK\n" if $self->{_verbose} > 1;
+        return;
     }
 }
 
 
 sub _get_packager {
     my ($self) = @_;
-    my $packager = RPM4::expand('%packager');
+    my $packager = $wrapper_class->expand_macro('%packager');
     if ($packager eq '%packager') {
         my $login = (getpwuid($<))[0];
         $packager = $ENV{EMAIL} ? "$login <$ENV{EMAIL}>" : $login;
@@ -651,27 +714,59 @@ sub _find_source_package {
 }
 
 sub _get_sources {
-    my ($self, $spec) = @_;
+    my ($self, $spec, $version) = @_;
 
-    my @sources =
+    my $header = $spec->srcheader();
+    my $name   = $header->tag('name');
+
+    my @sources;
+
+    # special cases: ignore sources defined in the spec file
+    if ($name =~ /^perl-(\S+)/) {
+        # source URL in the spec file can not be trusted, as it 
+        # change for each release, so try to use CPAN metabase DB
+        my $cpan_name = $1;
+        $cpan_name =~ s/-/::/g;
+
+        # ignore spec file URL, as it changes between releases
+        my ($cpan_url, $cpan_version) = _get_cpan_package_info(
+            $cpan_name
+        );
+
+        if ($cpan_url && $cpan_version && $cpan_version eq $version) {
+            # use the result if available
+            my $source = ($spec->sources_url())[0];
+            @sources = ( { url => $cpan_url, bzme => $source =~ /\.tar\.bz2$/ } );
+        }
+    }
+
+    return @sources if @sources;
+
+    # default case: extract all sources defined with an URL in the spec file
+    @sources =
+        map { _fix_source($_, $version) }
+        map { { url => $_, bzme => 0 } }
         grep { /(?:ftp|svns?|https?):\/\/\S+/ }
         $spec->sources_url();
 
-    if (! @sources) {
-        print "No remote sources were found, fall back on URL tag ...\n"
-            if $self->{_verbose};
+    return @sources if @sources;
 
-        my $url = $spec->srcheader()->tag('url');
+    # fallback case: try a single source, with URL deduced from package URL
 
-        foreach my $rule (@{$self->{_url_rewrite_rules}}) {
-            # curiously, we need two level of quoting-evaluation here :(
-            if ($url =~ s!$rule->{from}!qq(qq($rule->{to}))!ee) {
-                last;
-            }    
-        }
+    print "No remote sources were found, fall back on URL tag ...\n"
+        if $self->{_verbose};
 
-        @sources = ( $url . '/' . ($spec->sources_url())[0] );
+    my $url = $header->tag('url');
+
+    foreach my $rule (@{$self->{_url_rewrite_rules}}) {
+        # curiously, we need two level of quoting-evaluation here :(
+        if ($url =~ s!$rule->{from}!qq(qq($rule->{to}))!ee) {
+            last;
+        }    
     }
+
+    my $source = ($spec->sources_url())[0];
+    @sources = ( { url => $url . '/' . $source, bzme => 0 } );
 
     return @sources;
 }
@@ -798,6 +893,70 @@ sub _get_new_release_number {
         $number .
         ($suffix ? $suffix : "");
 
+}
+
+sub _fix_source {
+    my ($source, $version) = @_;
+
+    given ($source->{url}) {
+        when (m!ftp.gnome.org/pub/GNOME/sources/!) {
+            # the last part of the path should match current
+            # major and minor version numbers:
+            # ftp://ftp.gnome.org/pub/GNOME/sources/ORbit2/2.10/ORbit2-2.10.0.tar.bz2
+            my ($major, $minor) = split('\.', $version);
+            $source->{url} =~ m!(.+)/([^/]+)$!;
+            my ($path, $file) = ($1, $2);
+            if ($path =~ m!/(\d+)\.(\d+)$!) {
+                # expected format found
+                if ($1 != $major || $2 != $minor) {
+                    # but not corresponding to the current version
+                    $path =~ s!\d+\.\d+$!$major.$minor!;
+                }
+            } else {
+                $path .= "/$major.$minor";
+            }
+            $source->{url} = "$path/$file";
+        }
+        when (m!\w+\.(perl|cpan)\.org/!) {
+            # force http
+            $source->{url} =~ s!ftp://ftp\.(perl|cpan)\.org/pub/CPAN!http://www.cpan.org!;
+            # force .tar.gz
+            $source->{bzme} = 1
+                if $source->{url} =~ s!\.tar\.bz2$!.tar.gz!;
+        }
+        when (m!download.pear.php.net/!) {
+            # PEAR: force tgz
+            $source->{bzme} = 1
+                if $source->{url} =~ s!\.tar\.bz2$!.tgz!;
+        }
+    }
+
+    return $source;
+}
+
+sub _get_cpan_package_info {
+    my ($name) = @_;
+
+    my $agent = LWP::UserAgent->new();
+    $agent->env_proxy();
+
+    my $response = $agent->get(
+        "http://cpanmetadb.appspot.com/v1.0/package/$name"
+    ); 
+
+    return unless $response->is_success();
+
+    my $conf = YAML::AppConfig->new(
+        string => $response->decoded_content()
+    );
+
+    return unless $conf->get('distfile');
+
+    my $url =
+        "http://search.cpan.org/CPAN/authors/id/" . $conf->get('distfile');
+    my $version = $conf->get('version');
+
+    return ($url, $version);
 }
 
 1;

@@ -1,9 +1,12 @@
 #!/usr/bin/perl
-# $Id: pod-coverage.t 1891 2007-11-04 17:40:52Z guillomovitch $
+# $Id: pod-coverage.t 2318 2011-01-22 12:59:02Z guillomovitch $
 
 use strict;
 use warnings;
 use Test::More;
+
+plan(skip_all => 'Author test, set $ENV{TEST_AUTHOR} to a true value to run')
+    unless $ENV{TEST_AUTHOR};
 
 eval "use Test::Pod::Coverage 1.04";
 plan(skip_all => 'Test::Pod::Coverage >= 1.04 required, skipping') if $@;

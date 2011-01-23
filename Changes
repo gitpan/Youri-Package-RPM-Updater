@@ -1,3 +1,19 @@
+2011-01-22 Guillaume Rousse <guillomovitch@zarb.org> 0.6.0
+	* compatibility with either RPM or RPM4 perl bindings
+
+2009-12-02 Guillaume Rousse <guillomovitch@zarb.org> 0.5.2
+	* add application/x-tar as a valid mime-type for all compressed 
+	  tar archives
+
+2009-11-22 Guillaume Rousse <guillomovitch@zarb.org> 0.5.1
+	* fix fallback to other compression format when a .tar.bz2 archive
+	  is not found
+
+2009-11-21 Guillaume Rousse <guillomovitch@zarb.org> 0.5.0
+	* allow usage of YAML-format configuration files
+	* check content-types according to file extension
+	* force archive extension to .tgz for PEAR packages download
+
 2009-07-03 Guillaume Rousse <guillomovitch@zarb.org> 0.4.7
 	* make version check before updating optional, for special situations 
 	  where comparaison is not reliable, such as mandriva perl packages
